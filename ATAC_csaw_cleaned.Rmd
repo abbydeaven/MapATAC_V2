@@ -1,0 +1,1132 @@
+---
+title: "ATAC_csaw"
+author: "Abby Deaven"
+date: "2025-10-13"
+output: html_document
+---
+
+```{r echo = TRUE, eval = FALSE }
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager", type = "source")
+
+BiocManager::install("csaw") #INSTALL from source (I had to download a gfortran installer from CRAN (https://cran.r-project.org/bin/macosx/tools/) )
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("DiffBind")
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("profileplyr")
+
+#edgeR
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("edgeR")
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("ComplexHeatmap")
+
+workingdir="C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC"
+
+#set working directory to the correct location for working machine
+knitr::opts_knit$set(root.dir = workingdir)
+setwd("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC")
+library(dplyr)
+```
+Run ChIPQC on ATAC samples
+Externally -- make samplesheet with bam file and peak information
+```{r}
+### ChIPQC ###
+install.packages("ChIPQC")
+library(dplyr)
+library(BiocParallel)
+
+## note - replaced all "-" in filenames with "_" --
+# in windows powershell, run: ls *.bam*| Rename-Item -NewName {$_.name -replace "-","_"}
+QC_meta <- read.table("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/ATAC_QC/Run152_SampleSheet_LOCAL.txt", sep = "\t", header = TRUE)
+
+#select samples
+QC <- QC_meta[1:23,1:8]
+# <- loadDb("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/Justina/A1163_txdb.sqlite")
+read.table("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/SortedBamFiles/152_N15_ATAC_H1mnG_50conidiophore_Rep2.shifted.bam")
+BiocParallel::register(BiocParallel::SerialParam())
+anaylsis <- ChIPQC(QC, chromosomes=NULL)
+
+metrics <- QCmetrics(anaylsis)
+write.table(metrics, file="C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/ATAC_QC/QC_metrics.txt", sep="\t")
+
+ChIPQCreport(anaylsis, reportName="Run152 CEA17 ATAC QC report", reportFolder="C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/ATAC_QC", facet = F)
+
+```
+
+## R Markdown
+Using DiffBind to create a consensus peakset
+```{r}
+library(DiffBind)
+library(d)
+samples <- read.table("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/ATAC_QC/ATAC_SampleSheet.txt", sep="\t", header=TRUE)
+samples <- samples[c(6:7, 16:17), 1:8]
+
+##add control information
+
+diff_sheet <- samples %>% mutate(ControlID="N6_Genomic_CEA10", bamControl = "C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/BamFiles_Downsampled/152_N6_Genomic_CEA10_WT__Rep_2.shifted.12M.bam") %>%  mutate(Treatment = "NA") %>% relocate(Treatment, .after = Condition)
+head(diff_sheet)
+
+diff_obj <- dba(sampleSheet=diff_sheet)
+diff_obj
+plot(diff_obj)
+overlap_rate <- dba.overlap(diff_obj,mode=DBA_OLAP_RATE)
+overlap_rate
+
+plot(overlap_rate,type='b',ylab='# peaks', xlab='Overlap at least this many peaksets')
+
+names(diff_obj$masks)
+dba.overlap(diff_obj,diff_obj$masks$conidia & diff_obj$masks$c37, mode=DBA_OLAP_RATE)
+
+diff_obj_consensus <- dba.peakset(diff_obj, consensus=c(DBA_TISSUE,DBA_CONDITION), minOverlap=0.5)
+
+diff_obj_consensus <- dba(diff_obj_consensus, mask=diff_obj_consensus$masks$Consensus, minOverlap=1)
+consensus_peaks <- dba.peakset(diff_obj_consensus, bRetrieve=TRUE)
+
+```
+
+
+```{r load files and peaksets}
+library(csaw)
+#read in sample sheet
+head(samples)
+samples <- read.table("./ATAC_QC/ATAC_SampleSheet.txt", sep="\t", header=TRUE)
+samples <- samples[c(6:7, 15:17), 1:8]
+
+bamReads <- samples$bamReads
+
+## extract 3 random bam files to obtain frag sizes
+bam1 = samples %>% slice_sample(n=1) %>% pull(bamReads)
+bam2 = samples %>% slice_sample(n=1) %>% pull(bamReads)
+bam3 = samples %>% filter(Tissue == "conidia") %>% slice_sample(n=1) %>% pull(bamReads)
+
+####QC check: look at fragment sizes of PE data to get max.frag paramenter used above ##1 
+ out1 <- getPESizes(bam1)
+ frag.sizes1 <- out1$sizes[out1$sizes<= 1500]
+ hist(frag.sizes1, breaks=50, xlab="Fragment sizes (bp)", ylab="Frequency", main="", col="grey80")
+
+ ####QC check: look at fragment sizes of PE data to get max.frag paramenter used above ##2
+ out2 <- getPESizes(bam2)
+ frag.sizes2 <- out2$sizes[out2$sizes<= 1500]
+ hist(frag.sizes2, breaks=50, xlab="Fragment sizes (bp)", ylab="Frequency", main="", col="grey80")
+ 
+####QC check: look at fragment sizes of PE data to get max.frag paramenter used above ##3
+ out3 <- getPESizes(bam3)
+ frag.sizes3 <- out3$sizes[out3$sizes<= 1500]
+ hist(frag.sizes3, breaks=50, xlab="Fragment sizes (bp)", ylab="Frequency", main="", col="grey80")
+
+
+###Example commands to import data from individual experiments
+# input <- samples[samples$Antibody == "input"]
+# K27samples <- samples[samples$Antibody == "H3K27me3", ]
+# K9samples <- samples[samples$Antibody == "H3K9me3", ]
+# K36samples <- samples[samples$Antibody == "H3K36me3",]
+# Kacsamples <- samples[samples$Antibody == "Kac",]
+
+##set parameters for windowCounts
+param <- readParam(pe="first", max.frag=500, minq=25 )
+
+## Find best fragment size
+max.delay <- 500
+x <- correlateReads(bamReads, max.delay, param=param)
+frag.len = maximizeCcf(x) ### using fragment size 198
+
+#read counts from bam files
+window.counts <- windowCounts(samples$bamReads, width=105, shift=0,
+filter=0, param=param)
+
+# read counts in diffbind consensus peaks
+peak.counts <- regionCounts(bamReads, consensus_peaks, param=param)
+
+# MACS2 peaks only: filter low abundance peaks
+library("edgeR")
+peak.abundances <- aveLogCPM(asDGEList(peak.counts)) 
+peak.counts.filt <- peak.counts[peak.abundances > -3, ] # only use peaks logCPM > -3
+# few or no peaks should be removed; modify as desired
+
+
+# #inspect the counts
+ head(assay(peak.counts.filt))
+# #view the window size locations
+ head(rowRanges(peak.counts.filt))
+# #view the sample names
+# head(colData(data_csaw))
+# #preview totals
+ peak.counts.filt$totals
+ 
+ ###############################
+# count BAM background bins (for TMM normalization)
+binned <- windowCounts(bamReads, bin=TRUE, width=10000, param=param)
+
+##########################################
+ # method 1: MACS2 peaks only, TMM normalization based on binned counts
+peak.counts.tmm <- peak.counts.filt
+peak.counts.tmm <- normFactors(binned, se.out=peak.counts.tmm)
+
+```
+
+## Set up differential analysis
+
+```{r}
+grouping <- factor(paste(samples$Tissue, samples$Condition, sep="."))
+
+#create a DGElistK9regions object
+DGElist <- asDGEList(peak.counts.tmm, group=factor(grouping)) 
+                                        #this creates an object with a counts DF and a samples DF
+
+#replace generic "Sample1, Sample2" names with actual names of samples
+colnames(DGElist$counts) <- paste(paste(samples$Tissue,samples$Condition, "R", sep="."), samples$Replicate, sep="")
+rownames(DGElist$samples) <-  paste(paste(samples$Tissue,samples$Condition, "R", sep="."), samples$Replicate, sep="")
+
+#examine data
+plotMDS(DGElist, method="bcv", col=as.numeric(DGElist$samples$group))
+    #plot shows replicates behave well.
+d1 <- estimateCommonDisp(DGElist, verbose=T)
+
+#design a model matrix to compare groups
+design.mat <- model.matrix(~0 + DGElist$samples$group)
+#replace wonky column names with readable ones
+colnames(design.mat) <- levels(DGElist$samples$group)
+
+#############################
+###
+###
+#     Estimate Dispersion
+###
+###
+#############################
+y <- estimateDisp(DGElist, design.mat)
+summary(y$trended.dispersion)
+
+fit <- glmQLFit(y, design.mat, robust=TRUE)
+summary(fit$var.post)
+
+head(y$counts)
+
+
+#plot fit
+par(mfrow=c(1,2))
+o <- order(y$AveLogCPM)
+plot(y$AveLogCPM[o], sqrt(y$trended.dispersion[o]), type="l", lwd=2,
+     ylim=c(0, 1), xlab=expression("Ave."~Log[2]~"CPM"),
+     ylab=("Biological coefficient of variation"))
+plotQLDisp(fit)
+```
+
+
+## export cpm from edgeR object for heatmapping
+
+## identify all enriched regions in each condition
+```{r}
+library(txdbmaker)
+library(ChIPseeker)
+
+levels = colnames(design.mat)
+contrast_gdna= data.frame(sample = levels)
+
+contrast_gdna$contrast <- paste0(levels, "-genomic.control")
+contrast_gdna <- contrast_gdna[-2,2]
+
+## no significant enrichment vs. gdna for conidia50, conidiophore37
+contrast_differential = c("conidia.c37-hyphae.c37")
+
+#contrasts for testing loop
+#contrast="conidia.c37-genomic.control"
+#contrast="conidiophore.c50-conidiophore.c37"
+
+contrasts=c(contrast_gdna, contrast_differential)
+CEA10_txdb <- makeTxDbFromGFF("./Af_Genome/CEA10/A1163_edit6_liftoff.gff",
+                format=,
+                dataSource=NA,
+                organism="Aspergillus fumigatus",
+                taxonomyId=NA,
+                circ_seqs=NULL,
+                chrominfo=NULL,
+                miRBaseBuild=NA,
+                metadata=NULL)
+
+
+saveDb(CEA10_txdb, file="./Af_Genome/CEA10/A1163_txdb.sqlite")
+
+#CEA10_txdb <- loadDb("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/Justina/A1163_txdb.sqlite")
+
+library(ChIPpeakAnno)
+library(ChIPseeker)
+
+for (contrast in contrasts) {
+  contrastname = gsub(".c37","37",contrast)
+  contrastname2 = gsub(".c50","50", contrastname)
+  contrastname3 = gsub("genomic.control","gDNA", contrastname2)
+  final_contrastname=gsub("-","_vs_", contrastname3)
+
+  print(final_contrastname)
+  
+  comparison = makeContrasts(contrasts = contrast, levels=design.mat)
+  counts <- peak.counts.tmm
+  results_gdna <- glmQLFTest(fit, contrast=comparison)
+  rowData(counts) <- cbind(rowData(counts), results_gdna$table)
+  merged_gdna <- mergeWindows(rowRanges(counts), tol=100L, max.width=1000L)
+  # use most significant window as statistical representation for p-value and FDR for merged windows
+  tab.best.gdna <- getBestTest(merged_gdna$id, results_gdna$table)
+  # concatenating all relevant statistical data for final merged windows (no redundant columns)
+  final.gdna <- GRanges(cbind(as.data.frame(merged_gdna$region), results_gdna$table[tab.best.gdna$rep.test, -4], tab.best.gdna[,-c(7:8)]))
+  FDR.thresh <- 0.05 # set as desired
+#  final.gdna <- final.gdna[order(final.gdna@elementMetadata$FDR), ]
+  final.gdna.sig <- final.gdna[final.gdna@elementMetadata$FDR < FDR.thresh, ]
+  ## save foldchange values to new dataframe for downstream analysis
+#  final.gdna.dataframe <- DataFrame(final.gdna)
+  assign(paste0("res_", final_contrastname), final.gdna)
+  
+  filename_all <- paste0("./csaw_Analysis/Results/Windows/", final_contrastname, "_all_windows.txt")
+  filename_sig <- paste0("./csaw_Analysis/Results/Windows/", final_contrastname, "_sig_windows.txt")
+
+  write.table(final.gdna, file=filename_all, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+  write.table(final.gdna.sig, file=filename_sig, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+  
+  #create bedfile for plotting -- will keep different foldchange cutoff for differential vs. genomic comparisons
+    if (grepl("gDNA", final_contrastname, fixed = TRUE)) {
+      print("gDNA mode")
+
+    final.gdna_df <- as.data.frame(final.gdna)
+    final.gdna_df.sig <- final.gdna_df %>%
+    filter(FDR < 0.05) %>%
+    filter(logFC > 1)
+    
+     final.gdna_df.sig.bed <- final.gdna_df.sig %>% 
+  dplyr::select(seqnames, start, end) %>%
+  dplyr::rename("chrom" = seqnames) %>%
+  dplyr::rename("chromStart" = start) %>%
+  dplyr::rename("chromEnd" = end)
+ 
+ 
+  bedname_sig <- paste0("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/csaw_Analysis/Results/BedFiles/", final_contrastname, "_sig_windows.bed")
+  write.table(final.gdna_df.sig.bed, file=bedname_sig, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+  
+  ## annotate windows from bed files
+  peakfile <- readPeakFile(bedname_sig)
+  peakAnno <- annotatePeak(peakfile, tssRegion=c(-1000, 500),
+                         TxDb=CEA10_txdb)
+
+
+  df_peakAnno <-as.data.frame(peakAnno)
+  peakAnno_out <- df_peakAnno %>% filter(distanceToTSS < 2000 & distanceToTSS > -2000) %>% filter(annotation == "Promoter")
+
+  anno_file <- paste0("./csaw_Analysis/Results/Annotation/", final_contrastname, "sig_genes.txt")
+  write.table(peakAnno_out, file=anno_file, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+  
+  peakAnno_out_bed <- peakAnno_out %>% dplyr::select(seqnames, geneStart, geneEnd, geneId)
+  anno_bed <- paste0("./csaw_Analysis/Results/Annotation/", final_contrastname, "sig_genes.bed")
+  write.table(peakAnno_out_bed, file=anno_bed, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+  ## store genes as a dataframe for downstream analysis
+  assign(paste0("genes_", final_contrastname), peakAnno_out)
+
+    } else {
+      print("differential mode")
+    final.diff_df <- as.data.frame(final.gdna)
+    final.diff_df.sig <- final.diff_df %>%
+    filter(FDR < 0.05)
+    
+     final.diff_df.sig.bed <- final.diff_df.sig %>% 
+    dplyr::select(seqnames, start, end, logFC) %>%
+    dplyr::rename("chrom" = seqnames) %>%
+    dplyr::rename("chromStart" = start) %>%
+    dplyr::rename("chromEnd" = end)
+    
+    final.diff.up_df <- final.diff_df.sig.bed %>%
+    filter(logFC > 1) %>%
+    dplyr::select(-logFC)
+    
+    final.diff.down_df <- final.diff_df.sig.bed %>%
+    filter(logFC < -1) %>%
+    dplyr::select(-logFC)
+    
+      up.bedname_sig <- paste0("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/csaw_Analysis/Results/BedFiles/", final_contrastname, "up_sig_windows.bed")
+       write.table(final.diff.up_df, file=up.bedname_sig, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+         ## annotate windows from bed files
+         peakfile_up <- readPeakFile(up.bedname_sig)
+         peakAnno_up <- annotatePeak(peakfile_up, tssRegion=c(-1000, 500),
+                         TxDb=CEA10_txdb)
+
+         df_peakAnno_up <-as.data.frame(peakAnno_up)
+         up_peakAnno_out <- df_peakAnno_up %>% filter(distanceToTSS < 2000 & distanceToTSS > -2000) %>% filter(annotation == "Promoter") %>% mutate(score = "1")
+
+
+
+       
+      down.bedname_sig <- paste0("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/csaw_Analysis/Results/BedFiles/", final_contrastname, "_down_sig_windows.bed")
+       write.table(final.diff.down_df, file=down.bedname_sig, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+         ## annotate windows from bed files
+         peakfile_down <- readPeakFile(down.bedname_sig)
+         peakAnno_down <- annotatePeak(peakfile_down, tssRegion=c(-1000, 500),
+                         TxDb=CEA10_txdb)
+
+         df_peakAnno_down <-as.data.frame(peakAnno_down)
+         down_peakAnno_out <- df_peakAnno %>% filter(distanceToTSS < 2000 & distanceToTSS > -2000) %>% filter(annotation == "Promoter") %>% mutate(score = "-1")
+         
+         all_peakAnno <- up_peakAnno_out %>% bind_rows(down_peakAnno_out)
+         
+         anno_file <- paste0("./csaw_Analysis/Results/Annotation/", final_contrastname, "sig_genes.txt")
+         write.table(all_peakAnno, file=anno_file, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+  
+         peakAnno_out_bed <- all_peakAnno %>% dplyr::select(seqnames, geneStart, geneEnd, geneId, score)
+         anno_bed <- paste0("./csaw_Analysis/Results/Annotation/", final_contrastname, "sig_genes.bed")
+         write.table(peakAnno_out_bed, file=anno_bed, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+         anno_bedgraph <- paste0("./csaw_Analysis/Results/Annotation/", final_contrastname, "sig_genes.bedGraph")
+         peakAnno_out_bedgraph <- peakAnno_out_bed %>% dplyr::select(-geneId)
+         write.table(peakAnno_out_bedgraph, file=anno_bedgraph, sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+                                                                                       
+      ## store genes as a dataframe for downstream analysis
+       assign(paste0("genes_", final_contrastname), all_peakAnno)
+
+    }
+
+}
+
+
+  consensus_peakAnno <-as.data.frame(consensus_peakAnno)
+  consensus_peakAnno_out <- consensus_peakAnno %>% filter(distanceToTSS < 2000 & distanceToTSS > -2000) %>% filter(annotation == "Promoter")
+  consensus_peakAnno_out_bed <- consensus_peakAnno_out %>% dplyr::select(seqnames, geneStart, geneEnd, geneId)
+  
+### comparing genes in conidia 37 vs. hyphae 37
+## assigning differential genes to one set or the other
+conidia37.v.hyphae37_genes <- data.frame(GeneID = genes_conidia37_vs_hyphae37$geneId, score=genes_conidia37_vs_hyphae37$score)
+conidia37.v.gdna_genes <- data.frame(GeneID = genes_conidia37_vs_gDNA$geneId)
+hyphae37.v.gdna_genes <- data.frame(GeneID = genes_hyphae37_vs_gDNA$geneId)
+
+conidia37.v.hyphae37_genes <- conidia37.v.hyphae37_genes %>% 
+#  filter(GeneID %in% hyphae37.v.gdna_genes$GeneID) %>%
+#  mutate(Identity="Shared") %>% 
+  mutate(Differential = case_when(GeneID %in% conidia37.v.hyphae37_genes$GeneID ~ "Yes",
+                                  ! GeneID %in% conidia37.v.hyphae37_genes$GeneID ~ "No")) %>%
+  mutate(score = as.numeric(score)) %>%
+  dplyr::mutate(Conidia.vs.Hyphae = case_when(score > 0 ~ "C>H",
+                                      score < 0 ~ "C<H"))
+
+conidia37.v.hyphae37_genes.SHARED <- conidia37.v.gdna_genes %>%
+  filter(GeneID %in% hyphae37.v.gdna_genes$GeneID) %>%
+  mutate(Identity="Shared")
+
+hyphae37.only <- hyphae37.v.gdna_genes %>% 
+  filter(! GeneID %in% conidia37.v.gdna_genes$GeneID) %>% 
+  filter(! GeneID %in% conidia37.v.hyphae37_genes.SHARED$GeneID) %>% 
+  mutate(Identity="Hyphae37 Only")
+
+conidia37.only <- conidia37.v.gdna_genes %>% 
+  filter(! GeneID %in% hyphae37.v.gdna_genes$GeneID) %>% 
+  filter(! GeneID %in% conidia37.v.hyphae37_genes.SHARED$GeneID) %>% 
+  mutate(Identity="Conidia 37 Only")
+
+All_C37_Genes <- rbind(conidia37.only,hyphae37.only,conidia37.v.hyphae37_genes.SHARED )
+All_C37_Genes_diffInfo <- All_C37_Genes %>% left_join(conidia37.v.hyphae37_genes, by = "GeneID") %>%
+  mutate(Differential = case_when(is.na(Differential) ~ "No",
+                        TRUE ~ Differential)) %>%
+  dplyr::select(-score)
+
+conidia <- All_C37_Genes %>% filter(Identity == "Conidia 37 Only" | Identity == "Shared") %>% pull(GeneID)
+hyphae <- All_C37_Genes %>% filter(Identity == "Hyphae37 Only" | Identity == "Shared") %>% pull(GeneID)
+
+
+### make venn diagram
+install.packages("VennDiagram")
+library(VennDiagram)
+
+library(RColorBrewer)
+colors <- c("#1a9640", "#da60a0")
+
+## Venn diagram of PRC2-target induction ##
+ venn.diagram(
+    x = list(conidia, hyphae),
+    category.names = c("Conidia", "Hyphae"),
+    filename = 'ResultsVenn_Diagram.png',
+    output = TRUE,
+    imagetype = "png",
+    height = 1200,
+    width = 1100,
+    resolution = 300,
+    compression = "lzw",
+    lwd = 1,
+    lty = 0.5,
+    fill = colors,
+            cex = .5,
+        fontface = "bold",
+        fontfamily = "sans",
+            cat.cex = 0.5,
+        cat.fontface = "bold",
+        cat.fontfamily = "sans",
+              cat.pos = c(-27, 27),
+          cat.dist = c(0.055, 0.055))
+
+write.table(All_C37_Genes_diffInfo, file="./csaw_Analysis/Results/Annotation/All_37C_genes_diffinfo.txt", sep="\t", quote=FALSE, row.names = FALSE)          
+conidia.v.hyphae_df <- as.data.frame(res_conidia37_vs_hyphae37)
+    conidia.v.hyphae_df.sig <- conidia.v.hyphae_df %>%
+    filter(FDR < 0.05) %>%
+    filter(logFC > 1 | logFC < -1) %>%
+    dplyr::select(seqnames, start, end, width, strand, logFC, FDR, direction) %>%
+      mutate(coord=paste0(seqnames,start,end))
+    
+head(CEA10_txdb)
+print(CEA10_txdb)
+
+## trying ChIPPeakAnno isntead
+
+annoData <- toGRanges(CEA10_txdb)
+library(ChIPpeakAnno)
+peaks <- res_conidia37_vs_gDNA
+seqlevelsStyle(peaks) <- seqlevelsStyle(annoData)
+annoData[1:2]
+seqlevelsStyle(peaks) <- seqlevelsStyle(annoData)
+  peakfile <- readPeakFile("./csaw_Analysis/Results/BedFiles/conidia37_vs_hyphae37_sig_windows.bed")
+
+  anno <- annotatePeakInBatch(peaks, AnnotationData=annoData, 
+                  output="nearestBiDirectionalPromoters", 
+                  bindingRegion=c(-2000, 500))
+  anno2<- anno[1:2]
+  anno_df <- as.data.frame(anno)
+  anno_out <- data.frame(seqnames=seqnames(anno),
+  start=start(anno),
+  end=end(anno),
+  names=c(rep(".", length(anno))),
+  scores=c(rep(".", length(anno))),
+  strand=strand(anno),
+  logFC=logFC(anno),
+  FDR=FDR(anno), 
+  direction=direction(anno),
+  feature=feature(anno))
+   
+  anno2 = anno$feature
+  data.frame(seqnames=seqnames(res_conidia37_vs_gDNA),
+  
+  annodf <- as.data.frame(anno) 
+   peaks <- as.data.frame(peakfile)
+   peaks <- peaks %>% mutate(coord=paste0(seqnames,start,end))
+  differential_anno <- annotatePeak(peakfile, tssRegion=c(-1000, 500),
+                         TxDb=CEA10_txdb)
+  differential_anno <- as.data.frame(differential_anno)
+  conidia.v.hyphae_genes <- differential_anno %>% filter(distanceToTSS < 2000 & distanceToTSS > -2000) %>% filter(annotation == "Promoter")
+  
+  write.table)
+
+  conidia.v.hyphae_genes2 <- conidia.v.hyphae_genes %>% dplyr::select(seqnames, start, end, width, geneId, distanceToTSS) %>%
+    mutate(coord=paste0(seqnames,start,end)) %>%
+    right_join(peaks, by = join_by(coord)) %>%
+    left_join(conidia.v.hyphae_df.sig, by=join_by(coord))
+```
+
+
+```{r}
+## Use foldchange vs. gDNA results to plot a heatmap over all of the regions used for the analysis
+
+atac.res.df <-data.frame(seqnames=seqnames(res_conidia37_vs_gDNA),
+  start=start(res_conidia37_vs_gDNA),
+  end=end(res_conidia37_vs_gDNA),
+  names=c(rep(".", length(res_conidia37_vs_gDNA))),
+  scores=c(rep(".", length(res_conidia37_vs_gDNA))),
+  strand=strand(res_conidia37_vs_gDNA),
+   logFC_conidia37_vs_gDNA = res_conidia37_vs_gDNA$logFC,
+   PValue_conidia37_vs_gDNA = res_conidia37_vs_gDNA$PValue,
+   FDR_conidia37_vs_gDNA = res_conidia37_vs_gDNA$FDR,
+     logFC_hyphae37_vs_gDNA = res_hyphae37_vs_gDNA$logFC,
+     PValue_hyphae37_vs_gDNA = res_hyphae37_vs_gDNA$PValue,
+     FDR_hyphae37_vs_gDNA = res_hyphae37_vs_gDNA$FDR,
+       logFC_conidia37_vs_hyphae37 = res_conidia37_vs_hyphae37$logFC,
+       PValue_conidia37_vs_hyphae37 = res_conidia37_vs_hyphae37$PValue,
+       FDR_conidia37_vs_hyphae37 = res_conidia37_vs_hyphae37$FDR)
+
+## make log.adj column --> set between -1 and 1 to 0, then filter out any with sum 0
+## then make dataset and remove any that are nonsig in all samples      
+
+atac.res.df_sig  <- within(atac.res.df, logFC_conidia37_vs_gDNA[FDR_conidia37_vs_gDNA > 0.05] <- 0.1)
+atac.res.df_sig  <- within(atac.res.df_sig, logFC_hyphae37_vs_gDNA[FDR_conidia37_vs_gDNA > 0.05] <- 0.1)
+atac.res.df_sig  <- within(atac.res.df_sig , logFC_conidia37_vs_hyphae37[FDR_conidia37_vs_hyphae37 > 0.05] <- 0.1)
+
+atac.res.df_sig2 <- atac.res.df_sig %>% 
+  mutate(conidia37_log.adj = case_when(logFC_conidia37_vs_gDNA < 0 & logFC_conidia37_vs_gDNA > -1 ~ 0.1,
+                                       logFC_conidia37_vs_gDNA > 0 & logFC_conidia37_vs_gDNA < 1 ~ 0.1,
+                                       TRUE ~ logFC_conidia37_vs_gDNA
+                                       )) %>%
+    mutate(hyphae37_log.adj = case_when(logFC_hyphae37_vs_gDNA < 0 & logFC_hyphae37_vs_gDNA > -1 ~ 0.1,
+                                       logFC_hyphae37_vs_gDNA > 0 & logFC_hyphae37_vs_gDNA < 1 ~ 0.1,
+                                       TRUE ~ logFC_hyphae37_vs_gDNA
+                                       )) %>%
+    mutate(conidia.v.hyphae37_log.adj = case_when(logFC_conidia37_vs_hyphae37 < 0 & logFC_conidia37_vs_hyphae37 > -1 ~ 0.1,
+                                       logFC_conidia37_vs_hyphae37 > 0 & logFC_conidia37_vs_hyphae37 < 1 ~ 0.1,
+                                       TRUE ~ logFC_conidia37_vs_hyphae37)) %>%
+    rowwise() %>% 
+    mutate(Differential = case_when(conidia37_log.adj == 0.1 & hyphae37_log.adj == 0.1 ~ "No",
+                                    TRUE ~ "Yes")) %>%
+    filter(Differential == "Yes") 
+
+#atac_Heatmap_df_fdr <- atac.res.df %>% dplyr::select(contains("FDR"))
+#rownames(atac_Heatmap_df_fdr) = paste(atac.res.df_sig$seqnames, atac.res.df_sig$start, atac.res.df_sig$end, sep=".")
+
+atac_Heatmap_df <- atac.res.df_sig2 %>% dplyr::select(contains("log.adj"))
+rownames(atac_Heatmap_df) <- paste(atac.res.df_sig2$seqnames, atac.res.df_sig2$start, atac.res.df_sig2$end, sep=".")
+
+
+### remove any regions that are non-significant in all samples
+#final_atac_Heatmap_df <- atac_Heatmap_df %>% rowwise %>% mutate(rowSum = sum(c_across(1:3))) %>% filter(rowSum > 0.3)
+#final_atac_Heatmap_df<-final_atac_Heatmap_df[,1:3]
+
+library(pheatmap)
+library(ComplexHeatmap)
+library(RColorBrewer)
+library(ggplot2)
+
+#remove outliers/set heatmap scale
+## splitting samples vs. gdna and differential samples into 2 separate lists for heatmaps
+atac_Heatmap_mat <- as.matrix(atac_Heatmap_df)
+diff <- atac_Heatmap_mat[,3]
+gdna <- atac_Heatmap_mat[,1:2]
+quantile(gdna, c(.01, .50, .75, .95, .98 , .995)) 
+quantile(diff, c(.01, .50, .75, .95, .98 , .995))
+
+max_gdna <- quantile(gdna, 0.99) # identify the 98th percentile value and assign this to max
+gdna[gdna>max_gdna] = max_gdna    #replace any value larger than the 98th percentile value with the 98th percentile value.
+min_gdna <- quantile(gdna, 0.01)
+gdna[gdna<min_gdna] = min_gdna    
+
+
+max_diff <- quantile(diff, 0.99)
+diff[diff>max] = max_diff
+min_diff <- quantile(diff, 0.01)
+diff[diff<min_diff] = min_diff    
+
+col_fun1 <- colorRamp2(c(0, 0.1, quantile(gdna, 0.99)), c("gray96",  "gray96", "darkorchid"))
+col_fun(seq(0, quantile(gdna, 0.99), length = 20))
+
+leg1 = Legend(col_fun= col_fun1, title = expression(bold("log "[2]~"(Fold Change)")), direction= "horizontal", at = c(-2, 0, 2), legend_width = unit(4,"cm"), title_position = "topcenter", border = "black")
+
+gdna_hmap <- Heatmap(gdna, col = col_fun1, 
+                    cluster_columns = F, show_row_names = FALSE, show_column_dend = FALSE, 
+                    show_row_dend = FALSE, cluster_rows = TRUE, 
+                    row_title = "Accessible Peaks", row_title_side = "left", row_title_gp = gpar(fontsize = 16),
+                    heatmap_legend_param = list(col_fun= col_fun1, title = expression(bold("log "[2]~"(Fold Change)")), direction= "horizontal", at = c(-2, 0, 2), legend_width = unit(4,"cm"), title_position = "topcenter", border = "black"),
+                    column_names_rot = 45, column_names_gp = grid::gpar(fontsize = 14),
+                    column_labels = c("Conidia", "Hyphae"))
+gmap = draw(gdna_hmap)
+   gdna_hmap_order <- row_order(gmap)
+   gdna_hmap_ordernames <- rownames(gdna)[unlist(gdna_hmap_order)]
+                    
+min(diff)
+min(gdna)
+
+col_fun2 <- colorRamp2(c(-2,0, 0.1, quantile(diff, 0.99)), c("#1a9640", "gray96", "gray96",  "#da60a0"))
+col_fun(seq(0, quantile(diff, 0.99), length = 20))
+leg2 = Legend(col_fun= col_fun2, title = expression(bold("log "[2]~"(Fold Change)")), direction= "horizontal", at = c(-2, 0, 2), legend_width = unit(4,"cm"), title_position = "topcenter", border = "black")
+
+diff_hmap <- Heatmap(diff, col = col_fun2, 
+                    cluster_columns = F, show_row_names = FALSE, show_column_dend = FALSE, 
+                    show_row_dend = FALSE, cluster_rows = FALSE, row_order = gdna_hmap_ordernames,
+                    row_title = "Accessible Windows", row_title_side = "left", row_title_gp = gpar(fontsize = 16),
+                    heatmap_legend_param = list(title = expression(bold("log "[2]~"(Fold Change)")), direction= "horizontal", at = c(-2, 0, 2), legend_width = unit(4,"cm"), title_position = "topcenter", border = "black"),
+                    column_names_rot = 45, column_names_gp = grid::gpar(fontsize = 14),
+                    column_labels = c("Conidia vs Hyphae"))
+draw(diff_hmap, heatmap_legend_side = "top")
+draw(diff_hmap)
+png("./csaw_Analysis/Results/Accessibility_heatmap.png", width = 600, height = 800)
+atac_heatmap = gdna_hmap + diff_hmap
+draw(atac_heatmap,  heatmap_legend_side = "top")
+dev.off()
+
+library(circlize)
+col_fun<- colorRamp2(c(-2, -1, 0.2, quantile(gdna, 0.99)), c("goldenrod2", "gray96",  "gray96", "darkorchid"))
+col_fun(seq(-2, quantile(atac_heatmap_mat_out, 0.99), length = 20))
+
+
+
+
+## use final gene set to annotate consensus genes
+consensus_peaks_anno <- as.data.frame(consensus_peaks)
+consensus_peaks_anno <- consensus_peaks_anno %>%
+  dplyr::select(seqnames, start, end) %>%
+  dplyr::rename("chrom" = seqnames) %>%
+  dplyr::rename("chromStart" = start) %>%
+  dplyr::rename("chromEnd" = end)
+
+  write.table(consensus_peaks_anno, file="./csaw_Analysis/Results/BedFiles/consensus_peaks.bed", sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+  
+  ## annotate windows from bed files
+  peakfile <- readPeakFile("./csaw_Analysis/Results/BedFiles/consensus_peaks.bed")
+  consensus_peakAnno <- annotatePeak(peakfile, tssRegion=c(-1000, 500),
+                         TxDb=CEA10_txdb)
+
+  consensus_peakAnno <-as.data.frame(consensus_peakAnno)
+  consensus_peakAnno_out <- consensus_peakAnno %>% filter(distanceToTSS < 2000 & distanceToTSS > -2000) %>% filter(annotation == "Promoter")
+  consensus_peakAnno_out_bed <- consensus_peakAnno_out %>% dplyr::select(seqnames, geneStart, geneEnd, geneId)
+
+  
+  
+  write.table(consensus_peakAnno_out, file="./csaw_Analysis/Results/Annotation/consensus_genes.txt", sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+    write.table(consensus_peakAnno_out_bed, file="./csaw_Analysis/Results/Annotation/consensus_genes.bed", sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+  ## store genes as a dataframe for downstream analysis
+
+
+```
+```{r}
+### Go term analysis
+
+### Read in lists of GO terms and enrichment from FungiDB
+conidia_bio <- data.frame(read.table("./csaw_Analysis/Results/conidia_bioprocess_go.tsv", sep = "\t", header=TRUE))
+
+  conidia_bio_df <- conidia_bio %>%
+    dplyr::select(-Result.gene.list) %>%
+    dplyr::rename("go" = ID) %>%
+    dplyr::rename("FDR"= "Benjamini") %>%
+    dplyr::rename("PercentBackground" = Pct.of.bgd) %>%
+    dplyr::arrange(FDR, Fold.enrichment) %>%
+    mutate(Tissue = "Conidia")
+  conidia_bio_top10 <- head(conidia_bio_df, 10)
+
+hyphae_bio_go <- data.frame(read.table("./csaw_Analysis/Results/hyphae_bioprocess_go.tsv", sep = "\t", header=TRUE))
+
+  hyphae_bio_go_df <- hyphae_bio_go %>%
+    dplyr::select(-Result.gene.list) %>%
+    dplyr::rename("go" = ID) %>%
+    dplyr::rename("FDR"= "Benjamini") %>%
+    dplyr::rename("PercentBackground" = Pct.of.bgd) %>%
+    dplyr::arrange(FDR, Fold.enrichment) %>%
+    dplyr::mutate(Tissue = "Hyphae")
+  hyphae_bio_top10 <- head(hyphae_bio_go_df,10)
+
+shared_GO <- data.frame(read.table("./csaw_Analysis/Results/hyphae_bioprocess_go.tsv", sep = "\t", header=TRUE))
+
+  shared_GO_df <- shared_GO %>%
+    dplyr::select(-Result.gene.list) %>%
+    dplyr::rename("go" = ID) %>%
+    dplyr::rename("FDR"= "Benjamini") %>%
+    dplyr::rename("PercentBackground" = Pct.of.bgd) %>%
+    dplyr::arrange(FDR, Fold.enrichment) %>%
+    dplyr::mutate(Tissue = "Shared")
+  shared_GO_top10 <- head(shared_GO_df,10)
+
+  
+all_top_go <- as.data.frame(rbind(conidia_bio_top10, hyphae_bio_top10, shared_GO_top10))
+all_go <- as.data.frame(rbind(conidia_bio_df, hyphae_bio_go_df, shared_GO_df))
+
+write.table(all_go, file="./Supplement/TableS4_FP_Genes_All_GOterms.txt", sep="\t", quote=FALSE)
+
+### Shortening names of GO terms for plotting ###
+all_top_go$Rename <- all_top_go$Name
+renameframe = all_top_go[,c(2, 12)]
+
+renameframe
+all_top_go$Rename <- gsub("olic process","olism", all_top_go$Rename)
+all_top_go$Rename <- gsub("etic process","esis", all_top_go$Rename)
+all_top_go$Rename <- gsub("nucleic acid-templated","", all_top_go$Rename)
+
+##Wrapping names to improve visuals
+all_top_go$NameWrap <- str_wrap(all_top_go$Rename, width=30)
+
+write.table(all_top_go, file="./Supplement/top_goterms.txt", sep="\t")
+
+##Plot as a lollipop plot
+GO_lollipop <- ggplot(all_top_go, aes(x = reorder(NameWrap, -log10(FDR)), y = -log10(FDR), color = FDR, label = paste("n =", PercentBackground))) +
+  geom_segment(aes(xend = reorder(NameWrap, -log10(FDR)), yend = 0), color = "gray", width=1.25) +
+  geom_point(aes(size = PercentBackground)) +
+  scale_size_continuous(name=str_wrap("Percent Background", width=8), range = c(10,15)) +
+  scale_color_gradient(low = "#5e3c99", high = "#e66101") +
+  facet_grid(rows = vars(Tissue), scales="free") +
+  coord_flip() +
+  labs(x = "GO Term", y = "Fold Enrichment") +
+  theme_classic(base_size = 22) +
+  theme(
+    axis.text.x = element_text(hjust = 1, size = 24),
+    axis.text.y = element_text(size = 24),
+    axis.title = element_text(size=24),
+    legend.text = element_text(size=22),
+    plot.background = element_rect(fill = "white"),
+    axis.line = element_line(color = "black",
+                                 linewidth = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 24))
+  )
+
+GO_lollipop
+ggsave("./csaw_analysis/Results/GO_plot.png", plot=GO_lollipop, dpi=400, width=50, height=50, units="cm")
+
+```
+```{r}
+### plot accessibility at conidia genes
+remotes::install_github(repo = "poisonalien/trackplot")
+devtools::install_github('abbydeaven/TrackPlotR_mod')
+library(TrackPlotR_mod)
+source("https://github.com/PoisonAlien/trackplot/blob/master/R/trackplot.R?raw=true")
+
+library(ggplot2)
+library(rtracklayer)
+library(trackplot)
+
+library(patchwork)
+
+
+genome = "C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/Af_Genome/CEA10/A1163_edit6_liftoff.gff"
+af_anno <- rtracklayer::import(con = genome,format = 'gff')
+af_anno$type <- gsub("mRNA", "transcript", af_anno$type)
+
+mcols(af_anno)$transcript_id = af_anno$locus_tag
+mcols(af_anno)$gene_id = af_anno$locus_tag
+
+whole_view=as("A1163_Afum_chr3:1-882553", "GRanges")
+path="C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/FinalBigWig/"
+bw =paste0(path, c("151_ATAC_CEA10_WT_Hyphae37_marked.min30.max200.bin15.smooth45.bw", 
+                        "151_ATAC_CEA10_WT_Conidia37_marked.min30.max200.bin15.smooth45.bw"))
+  bw_files <- load_BigWig(file_path=bw, file_name=c("Hyphae 37", "Conidia 37"))
+
+wholeview = coverage_vis_region(bw_files, whole_view, y_lim=40, y_label = "Coverage", style="style_2", sample_order=c("Hyphae 37", "Conidia 37"), col_pal=c("darkorchid","springgreen4")) +      
+  theme(axis.ticks.x = element_blank(),                                                                                                                                          axis.text.x = element_blank(),                                                                                                             axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+                                      strip.background = element_rect(fill="white"),
+                                      panel.border=element_rect(fill=NA, color="black"))
+plot(wholeview)
+
+whole_genes = transcript_vis_region(gene_anno = af_anno,region = whole_view, display_by = 'gene',show_name = NULL, display_mode = "collapse") + theme(        axis.title.y = element_blank(), panel.border=element_blank(), panel.background = element_blank())
+
+
+wholeplot = plot(wholeview + plot_spacer() + whole_genes +
+       plot_layout(ncol=1, heights=c(0.5, -.05, 0.05)))
+
+ggsave(filename="C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/FinalBigWig/Chrom3plot.png", plot=wholeplot, device="png", width=12, height=4)
+
+conidia_only = as("A1163_Afum_chr3:1118000-1123000", "GRanges")
+  conview = coverage_vis_region(bw_files, conidia_only, y_lim=7, y_label = "Coverage", style="style_2", sample_order=c("Hyphae 37", "Conidia 37"), col_pal=c("darkorchid","springgreen4")) +      
+  theme(axis.ticks.x = element_blank(),                                                                                                                                          axis.text.x = element_blank(),                                                                                                             axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+                                      strip.background = element_rect(fill="white"),
+                                      panel.border=element_rect(fill=NA, color="black"))
+         conview = highlight_region(conview, start = "112000", end = "112500")
+
+con_genes = transcript_vis_region(gene_anno = af_anno,region = conidia_only, display_by = 'gene',show_name = "gene_id", display_mode = "collapse") + theme(        axis.text.x= element_blank(), axis.ticks.x= element_blank(), axis.title.y = element_blank(), panel.border=element_blank(), panel.background = element_blank())
+
+conplot <- plot(conview + plot_spacer() + con_genes +
+       plot_layout(ncol=1, heights=c(0.4, -.0446, 0.05)))
+ggsave("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/FinalBigWig/conidiaplot.png", conplot, device="png", width=6, height=4, dpi=600)
+
+
+hyphae_only = as("A1163_Afum_chr3:95500-100500", "GRanges")
+ hyview = coverage_vis_region(bw_files, hyphae_only, y_lim=20, y_label = "Coverage", style="style_2", sample_order=c("Hyphae 37", "Conidia 37"), col_pal=c("darkorchid","springgreen4")) +      
+  theme(axis.ticks.x = element_blank(),                                                                                                                                          axis.text.x = element_blank(),                                                                                                             axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+                                      strip.background = element_rect(fill="white", color= "white"),
+                                      panel.border=element_rect(fill=NA, color="black"))
+         conview = highlight_region(conview, start = "112000", end = "112500")
+
+hgenes = transcript_vis_region(gene_anno = af_anno,region = hyphae_only, display_by = 'gene',show_name = "gene_id", display_mode = "collapse") + theme(              axis.text.x= element_blank(), axis.ticks.x= element_blank(), axis.title.y = element_blank(), panel.border=element_blank(), panel.background = element_blank())
+
+hyphae <- plot(hyview + plot_spacer() + hgenes +
+plot_layout(ncol=1, heights=c(0.4, -.0446, 0.05)))
+
+ggsave("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/FinalBigWig/hypaheplot.png", hyphae, device="png", width=6, height=4, dpi=600)
+
+shared = as("A1163_Afum_chr3:420000-425000", "GRanges")
+ shareview = coverage_vis_region(bw_files, shared, y_lim=10, y_label = "Coverage", style="style_2", sample_order=c("Hyphae 37", "Conidia 37"), col_pal=c("darkorchid","springgreen4")) +      
+  theme(axis.ticks.x = element_blank(),                                                                                                                                          axis.text.x = element_blank(),                                                                                                             axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+                                      strip.background = element_rect(fill="white"),
+                                      panel.border=element_rect(fill=NA, color="black"))
+         conview = highlight_region(conview, start = "112000", end = "112500")
+
+sharegenes = transcript_vis_region(gene_anno = af_anno,region = shared, display_by = 'gene',show_name = "gene_id", display_mode = "collapse") + theme(                     axis.text.x= element_blank(), axis.ticks.x= element_blank(), axis.title.y = element_blank(), panel.border=element_blank(), panel.background = element_blank())
+
+
+sharedplot <- plot(shareview + plot_spacer() + sharegenes +
+       plot_layout(ncol=1, heights=c(0.4, -.0446, 0.05)))
+ggsave("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/FinalBigWig/shareplot.png", sharedplot, device="png", width=6, height=4, dpi=600)
+
+
+
+
+```
+
+plot accessibility at starship genes
+```{r}
+remotes::install_github(repo = "poisonalien/trackplot")
+devtools::install_github('yimingsun12138/TrackPlotR')
+source("https://github.com/PoisonAlien/trackplot/blob/master/R/trackplot.R?raw=true")
+
+
+install.packages("C:/Users/abbyd/bin/TrackPlotR_mod", repos=NULL, type="source")
+
+library(ggplot2)
+library(rtracklayer)
+library(trackplot)
+
+library(patchwork)
+starships <- read.table("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/Starships.bed", sep="\t")
+starships_genes <- read.table("../F32_PreliminaryData/starship_genes.bed", sep="\t")
+
+starship=as("A1163_Afum_chr1:561788-579157", "GRanges")
+chrom="A1163_Afum_chr1"
+region_start="562788"
+region_end="58157"
+
+##starship window
+window <- GRanges(seqnames = chrom, ranges=IRanges(start = 561788, end = 579157))
+t2=transcript_vis_region(gene_anno = genome, )
+
+starships <- starships[,1:4]
+colnames(starships) = c("seqnames", "start", "end", "name", "ID", "haplotype", "ship.name" )
+starship_list = starships$ship.name
+
+
+path="C:/Users/abbyd/Documents/Research/Bioinformatics/F32_PreliminaryData/bigWig/"
+
+atac=paste0("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/FinalBigWig/", "151_ATAC_CEA10_WT_Hyphae37_marked.min30.max200.bin15.smooth45.bw")
+  atac_bw <- load_BigWig(file_path=atac, file_name="ATACseq")
+k4=paste0(path, "120-2_ChIP_WT_H3K4me2_Rep1.bin_25.smooth_75Bulk.bw")
+  k4_bw <- load_BigWig(file_path=k4, file_name="H3K4me2")
+k9=paste0(path, "120-3_ChIP_WT_H3K9me3_Rep1.bin_25.smooth_75Bulk.bw")
+  k9_bw <- load_BigWig(file_path=k9, file_name="H3K9me3")
+
+  ##rerunning a select few
+#  starship_list = c("navis04.var10", "navis07.var31", "navis10.Loki.var35")
+#  ship="CEA10_s00019"
+  
+  starship_list
+#  ship="Nebuchadnezzar.h1"
+  
+for (ship in starship_list) {
+  print(ship)
+  ship_coord = starships %>% filter(ship.name == ship)
+  
+  #set variables for start, end, and seqnames
+  seq=ship_coord$seqnames
+  start=ship_coord$start
+  end=ship_coord$end
+  
+  print(c(ship, seq, start, end))
+
+  ship_region = paste0(seq, ":", start, "-", end) 
+  print(ship_region)
+  ship_region=as(ship_region, "GRanges")
+  
+  ship_window = GRanges(seqnames = seq, ranges=IRanges(start = start, end = end))
+  ship_overlap <- findOverlaps(af_anno, ship_window)
+  ship_overlap_subset <- af_anno[queryHits(ship_overlap)]
+  
+  ext = 3000
+
+
+
+#  atac_k4_bw <- c(atac, k4)
+#  atac_k4_tracks <- load_BigWig(file_path=atac_k4_bw, file_name=c("ATAC-seq", "H3K4me2"))
+  
+  t_atac = coverage_vis_region(atac_bw, ship_region, up_extend = ext, down_extend = ext, y_lim = 30, style = "style_2", col_pal="darkorchid") +
+     theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),                                                                                                            
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        strip.background = element_rect(fill=NA, color= NA),
+        panel.border=element_rect(fill=NA, color="black"),
+        plot.margin = unit(c(0,0,0,0), "cm"))
+  
+    t_atac <- highlight_region(gg_object = t_atac, start = start, end = end)
+
+  
+  t_k4 = coverage_vis_region(k4_bw, ship_region, up_extend = ext, down_extend = ext, y_lim = 30, style = "style_2", col_pal="hotpink2") +
+     theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),                                                                                                            
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        strip.background = element_rect(fill=NA, color= NA),
+        panel.border=element_rect(fill=NA, color="black"),
+        plot.margin = unit(c(0,0,0,0), "cm"))
+  
+    t_k4 <- highlight_region(gg_object = t_k4, start = start, end = end)
+
+  t_k9 = coverage_vis_region(k9_bw, ship_region, up_extend = ext, down_extend = ext, y_lim = 60, style="style_2", col_pal="#3A5FCD") + 
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),                                                                                                            
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        strip.background = element_rect(fill=NA, color= NA),
+        panel.border=element_rect(fill=NA, color="black"),
+        plot.margin = unit(c(0,0,0,0), "cm"))
+
+    t_k9 <- highlight_region(gg_object = t_k9, start = start, end = end)
+  
+    t_genes = transcript_vis_region(gene_anno = af_anno,region = ship_region, up_extend = ext, down_extend = ext, display_by = 'gene',show_name = NULL, display_mode = "squish") + 
+      theme(axis.text.x= element_blank(), axis.ticks.x= element_blank(), axis.title.y = element_blank(), panel.border=element_blank(), panel.background = element_blank(), plot.margin = unit(c(0,0,0,0), "cm"))
+
+    t_k4_dim = get_dim(t_k4)
+    set_dim(t_atac, t_k4_dim)
+    set_dim(t_k9, t_k4_dim)
+#  all <- t_atac_highlight + plot_spacer() + t_k4_highlight + plot_spacer() + t_k9_highlight + t_genes + plot_layout(guides = "collect", axes = "collect",  axis_titles = "collect", ncol = 1, heights = c(0.5, -.176, 0.5, -.2, 0.5, 0.2))
+custom_spacer <- plot_spacer()+
+                  theme(plot.margin = unit(c(0, 0, 0, 0),"lines"))
+
+ all2 <- t_atac + custom_spacer + t_k4 + custom_spacer + t_k9 + t_genes + plot_layout(ncol=1, widths=c(1), heights=c(0.75, -0.047, 0.75, -0.047, .75, 0.08), guides="collect") + plot_annotation(title=ship, theme= theme(plot.title = element_text(hjust = 0.5)))
+ print(all2)
+ assign(paste0("track_", ship), all2)
+
+filename=paste0("C:/Users/abbyd/Documents/Research/Bioinformatics/F32_PreliminaryData/Plots/", "track_",ship,".png")
+ggsave(filename=filename, plot=all2, device="png", width=5, height=2.5)
+
+
+}
+```
+
+
+```{r}
+##Gnosis H1 has an outlier; plotting manually
+  ship="Gnosis.h1"
+  gnosis1_coord = starships %>% filter(ship.name == ship)
+  
+  #set variables for start, end, and seqnames
+  seq=gnosis1_coord$seqnames
+  start=gnosis1_coord$start
+  end=gnosis1_coord$end
+  
+
+  gnosis1_region = paste0(seq, ":", start, "-", end) 
+  print(gnosis1_region)
+  gnosis1_region=as(gnosis1_region, "GRanges")
+  
+  gnosis1_window = GRanges(seqnames = seq, ranges=IRanges(start = start, end = end))
+  gnosis1_overlap <- findOverlaps(af_anno, gnosis1_window)
+  gnosis1_overlap_subset <- af_anno[queryHits(gnosis1_overlap)]
+  
+  ext = 3000
+  
+  atac_k4_bw <- c(atac, k4)
+  atac_k4_tracks <- load_BigWig(file_path=atac_k4_bw, file_name=c("ATAC-seq", "H3K4me2"))
+  
+  t_atac_k4 = coverage_vis_region(atac_k4_tracks, gnosis1_region, up_extend = ext, down_extend = ext, y_lim=20, col_pal=c("darkorchid","hotpink2"))  +      
+    theme(axis.ticks.x = element_blank(),                                                                                                                                          axis.text.x = element_blank(),                                                                                                              axis.title.x = element_blank(),
+                                       axis.text.y = element_text(size=10),
+                                       axis.title.y = element_blank())
+  
+    t_atac_k4 <- highlight_region(gg_object = t_atac_k4, start = start, end = end)
+
+#  t_atac = coverage_vis_region(atac_bw, gnosis1_region, up_extend = ext, down_extend = ext, col_pal="darkorchid")  + theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),axis.title.x = element_blank(), axis.title.y = element_blank(), axis.text.y= element_text(6))
+#    t_atac_highlight <- highlight_region(gg_object = t_atac, start = start, end = end)
+
+#    t_k4 = coverage_vis_region(k4_bw, gnosis1_region, up_extend = ext, down_extend = ext, col_pal="hotpink2")  + theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),axis.title.x = element_blank(), axis.text.y= element_text(6))
+#    t_k4_highlight <- highlight_region(gg_object = t_k4, start = start, end = end)
+
+  t_k9 = coverage_vis_region(k9_bw, gnosis1_region, up_extend = ext, down_extend = ext, col_pal="#3A5FCD") +
+    theme(axis.ticks.x = element_blank(),                                                                                                                                          axis.text.x = element_blank(),                                                                                                              axis.title.x = element_blank(),
+                                       axis.text.y = element_text(size=10),
+                                       axis.title.y = element_blank())
+    t_k9 <- highlight_region(gg_object = t_k9, start = start, end = end)
+    
+  
+    t_genes = transcript_vis_region(gene_anno = af_anno,region = gnosis1_region, up_extend = ext, down_extend = ext, display_by = 'gene',show_name = NULL, display_mode = "squish") + theme(axis.title.y= element_blank())
+
+#  all <- t_atac_highlight + plot_spacer() + t_k4_highlight + plot_spacer() + t_k9_highlight + t_genes + plot_layout(guides = "collect", axes = "collect",  axis_titles = "collect", ncol = 1, heights = c(0.5, -.176, 0.5, -.2, 0.5, 0.2))
+
+  
+
+ all2 <- labs(title=ship) + t_atac_k4 + plot_spacer() + t_k9 + t_genes + plot_layout(ncol=1, heights=(c(1.5, -.25, .75, 0.2))) + theme(plot.title = element_text(hjust = 0.5))
+ print(all2)
+ assign(paste0("track_", ship), all2)
+
+filename=paste0("C:/Users/abbyd/Documents/Research/Bioinformatics/F32_PreliminaryData/Plots/", "track_",ship,".png")
+ggsave(filename=filename, plot=all2, device="png")
+```
+
+
+```{r}
+
+##rename a few variable
+assign("track_navis10.Loki.var35", track_navis10(Loki).var35)
+
+k9_ships = gList(c(track_navis04.var10,track_navis07.var31, track_Logos.h1, track_Logos.h2))
+
+patch1 <- wrap_plots(track_navis04.var10,track_navis07.var31, track_Logos.h1, track_Logos.h2, ncol=2, guides = "collect")
+patch1
+patch1 <- 
+  wrap_plots(track_Tardis.h1, track_navis04.var10, track_navis07.var31, track_Osiris.h3, track_Nebuchadnezzar.h1, track_Logos.h1, ncol=1, guides = "collect", axes = "collect", axis_titles = "collect")
+ggsave(filename="C:/Users/abbyd/Documents/Research/Bioinformatics/F32_PreliminaryData/Plots/patchtest.png", plot=patch1, device="png")
+
+
+             patch1
+             track_Gnosis.h2,track_Janus.h2.1, track_navis10.Loki.var35, track_Logos.h2, track_Gnosis.h1,track_Janus.h2.2, ncol=1, heights= c(10, 10, 10, 10, 1, 1))
+
+  patch1
+  Janus.h2.2_track / Osiris.h3_track
+print(Janus.h2.2_track / Osiris.h3_track, plot_layout(ncol=1, heights=c(1,1)))
+  
+  
+```
+
+
+```{r}
+echo
+
+
+overlap <- findOverlaps(af_anno, window)
+starship_subset <- af_anno[queryHits(overlap)]
+
+
+  starship_subset <- subset(af_anno, seqnames(af_anno) == seqnames(window) &
+                              start(af_anno) >= start(window) &
+                              end(af_anno) <= end(window))
+  
+windows <- GRanges(seqnames = starships$V1, ranges=IRanges(start= starships$V2, end = starships$V3))
+
+overlaps=findOverlaps(af_anno, windows)
+
+# Extract the subset
+subset_gr <- af_anno[queryHits(overlaps)]
+
+bw = c("C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/BW_Downsampled/151_N17_ATAC_H1mnGreen_37conidia_Rep2_bin15_smooth45_min30.max200_Bulk.bw", "C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/MappingOutput/BW_Downsampled/151-N1_ATAC_CEA10_WT__Rep1_marked.12M.bin15_smooth45_Bulk.bw")
+genome = "C:/Users/abbyd/Documents/Research/Bioinformatics/AfATAC/Af_Genome/CEA10/A1163_edit6_liftoff.gff"
+
+af_anno <- rtracklayer::import(con = genome,format = 'gff')
+af_anno1 <- 
+bigwig = load_BigWig(file_path = bw, file_name = c("Conidia", "Hyphae"))
+t = coverage_vis_region(bigwig, starship, up_extend = 1000, down_extend = 1000)
+p = t + theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),axis.title.x = element_blank())
+t2 = transcript_vis_region(gene_anno = af_anno,region = starship, up_extend = 1000, down_extend = 1000, display_by = 'gene',show_name = 'gene_id', display_mode = "squish")
+p2 = t2 + theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),axis.title.x = element_blank())
+print(p + p2 + plot_layout(ncol = 1, heights = c(0.5,0.05)))
+
+af_anno$type <- gsub("mRNA", "transcript", af_anno$type)
+
+mcols(af_anno)$transcript_id = af_anno$locus_tag
+mcols(af_anno)$gene_id = af_anno$locus_tag
+
+setMethod("$", "GRanges", function(x, name) { # {{{
+  elementMetadata(x)[, name]
+}) # }}}
+
+setMethod("$<-", "GRanges", function(x, name, value) { # {{{
+  elementMetadata(x)[[ name ]] <- value
+  return(x)
+}) # }}}
+
+
+```
+
