@@ -17,6 +17,8 @@ OutputFolderName="ATAC2_Output"
 #GENOME="path/to/IndexedGenomeFile"
 
 GENOME="/home/zlewis/Genomes/Neurospora/Nc12_RefSeq/GCA_000182925.2_NC12_genomic"
+#GENOME="/home/ad45368/MouseGenome/GRCm39.genome.fa"  #updated mouse genome
+
 
 #GENOME="/home/zlewis/Genomes/AfumagatisGenome/Af293_complete_Cyp51A_variants/GCF_000002655.1_ASM265v1_genomic_TR46_Cyp51A_hph.fna" #complete genome with TR46_Cyp51A transgene from the MoyeRowley lab
 #GENOME="/home/zlewis/Genomes/AfumagatisGenome/Af293_complete_Cyp51A_variants/GCF_000002655.1_ASM265v1_genomic_TR34_Cyp51A_hph.fna" #complete genome with TR34_Cyp51A transgene from the MoyeRowley lab
