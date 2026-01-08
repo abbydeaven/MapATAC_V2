@@ -145,22 +145,28 @@ rm ${tmp}_raw.bam
  # bamCoverage -p $THREADS --Offset 1 3 -bs 15 --smoothLength 45 --minMappingQuality 25 --effectiveGenomeSize 317634770 --normalizeUsing BPM  -of bigwig -b ${shifted_downsize} -o "${bw_bulk}_marked.12M.bin15_smooth45_Bulk.bw" --blackListFileName /lustre2/scratch/ad45368/Af_ATAC/Run152/MapATAC_Output/BroadPeaks/152_N6_Genomic_CEA10_WT__Rep_2_S102_L006_R1_001_val_1.fq.gz_peaks.broadPeak
  # bamCoverage -p $THREADS --Offset 1 3 -bs 1 --smoothLength 6 --MNase --minMappingQuality 25 --effectiveGenomeSize 317634770 --normalizeUsing BPM  -of bigwig -b ${shifted_downsize} -o "${bw_mnase}_marked.12M.bin1_smooth6_MNase.bw" --blackListFileName /lustre2/scratch/ad45368/Af_ATAC/Run152/MapATAC_Output/BroadPeaks/152_N6_Genomic_CEA10_WT__Rep_2_S102_L006_R1_001_val_1.fq.gz_peaks.broadPeak
 # ##setting fragsize
- bamCoverage -p $THREADS --Offset 1 3 -bs 15 --smoothLength 45 --minMappingQuality 25 --effectiveGenomeSize 41037538 --minFragmentLength 30 --maxFragmentLength 200 --normalizeUsing BPM  -of bigwig -b ${shifted_marked_dupes} -o "${bw_bulk}_marked.min30.max200.bin15_smooth45_Bulk.bw"
- bamCoverage -p $THREADS --Offset 1 3 -bs 1 --smoothLength 6 --MNase --minMappingQuality 25 --effectiveGenomeSize 41037538 --normalizeUsing BPM --minFragmentLength 30 --maxFragmentLength 200  -of bigwig -b ${shifted_marked_dupes} -o "${bw_mnase}_marked.min30.max200.bin1_smooth6_MNase.bw"
+# bamCoverage -p $THREADS --Offset 1 3 -bs 15 --smoothLength 45 --minMappingQuality 25 --effectiveGenomeSize 41037538 --minFragmentLength 30 --maxFragmentLength 200 --normalizeUsing BPM  -of bigwig -b ${shifted_marked_dupes} -o "${bw_bulk}_marked.min30.max200.bin15_smooth45_Bulk.bw"
+# bamCoverage -p $THREADS --Offset 1 3 -bs 1 --smoothLength 6 --MNase --minMappingQuality 25 --effectiveGenomeSize 41037538 --normalizeUsing BPM --minFragmentLength 30 --maxFragmentLength 200  -of bigwig -b ${shifted_marked_dupes} -o "${bw_mnase}_marked.min30.max200.bin1_smooth6_MNase.bw"
 
 # mouse
  bamCoverage -p $THREADS --Offset 1 3 -bs 15 --smoothLength 45 --minMappingQuality 25  --minFragmentLength 30 --maxFragmentLength 200 --effectiveGenomeSize 2654621783 --normalizeUsing BPM --blackListFileName "/ad45368/MouseGenomes/mm10-blacklist.v2.Liftover.mm39.bed.txt" -of bigwig -b ${shifted_marked_dupes} -o "${bw_bulk}_marked.min30.max200.bin15_smooth45_Bulk.bw"
+# A. fumigatus CEA10
+ bamCoverage -p $THREADS --Offset 1 3 -bs 15 --smoothLength 45 --minMappingQuality 25  --minFragmentLength 30 --maxFragmentLength 200 --effectiveGenomeSize 28918592 --normalizeUsing BPM  -of bigwig -b ${shifted_marked_dupes} -o "${bw_bulk}_marked.min30.max200.bin15_smooth45_Bulk.bw"
 
 #control="/lustre2/scratch/ad45368/Af_ATAC/Run152/MapATAC_Output/SortedBamFiles"
 module load MACS3/3.0.1-gfbf-2023a
-macs3 callpeak -t $shifted_marked_dupes --nolambda --format BAMPE --outdir ${OUTDIR}/Peaks/BroadPeaks -n ${name}_bampe --broad-cutoff 0.05 --broad --keep-dup all -q 0.01 -g mm
-# macs3 hmmratac -i ${shifted_downsized_marked_dupes} -f BAMPE -n ${name}_hmmr --outdir Peaks/hmmratac -e /lustre2/scratch/ad45368/Af_ATAC/Run152/MapATAC_Output/BroadPeaks/152_N6_Genomic_CEA10_WT__Rep_2_S102_L006_R1_001_val_1.fq.gz_peaks.broadPeak
 
+#mouse
+macs3 callpeak -t $shifted_marked_dupes --nolambda --format BAMPE --outdir ${OUTDIR}/Peaks/BroadPeaks -n ${name}_bampe --broad-cutoff 0.05 --broad --keep-dup all -q 0.01 -g mm
+
+# A. fumigatus CEA10
+macs3 callpeak -t $shifted_marked_dupes -c /lustre2/scratch/ad45368/Af_ATAC/Run152/MapATAC_Output/SortedBamFiles/152_N6_Genomic_CEA10_WT__Rep_2_S102_L006_R1_001_val_1.fq.gz.shifted.bam --format BAMPE --outdir ${OUTDIR}/Peaks/BroadPeaks -n ${name}_bampe --broad-cutoff 0.05 --broad --keep-dup all -q 0.01
 
 
 done
 
 module load MultiQC/1.28-foss-2024a
 
-multiqc --no-ai ${OUTDIR} -i "Nc_ATAC_qc"
+multiqc --no-ai ${OUTDIR} -i "ATAC_qc"
+
 
