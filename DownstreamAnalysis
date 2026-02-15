@@ -1,0 +1,103 @@
+#!/bin/bash
+#SBATCH --partition=batch
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-user=ad45368@uga.edu
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=100gb
+#SBATCH --time=8:00:00
+#SBATCH --output=../MappingOutput/logs/%x.out
+#SBATCH --error=../MappingOutput/logs/%x.err
+
+
+cd $SLURM_SUBMIT_DIR
+
+##Directory information+variables -- running this from main project directory:
+outdir="./ATAC2_Output"
+bamdir="${outdir}/bamFiles"
+bwdir="${outdir}/bigWig"
+PeakDir="${outdir}/Peaks/BroadPeaks"
+Motfis="${outdir}/Motifs"
+
+## Input control and rep information, using name:
+GPBSA_36_1="154_N11_ATAC_GPBSA_36h_Rep1"
+GPBSA_36_2="154_N12_ATAC_GPBSA_36h_Rep2"
+GPBSA_36_3="154_N13_ATAC_GPBSA_36h_Rep3"
+
+GP_12_1="154_N14_ATAC_GP_12h_Rep1"
+GP_12_2="154_N15_ATAC_GP_12h_Rep2"
+GP_12_3="154_N16_ATAC_GP_12h_Rep3"
+
+GP_36_1="154_N17_ATAC_GP_36h_Rep1"
+GP_36_2="154_N18_ATAC_GP_36h_Rep2"
+GP_36_3="154_N20_ATAC_GP_36h_Rep3"
+
+mPhi_12_1="154_N1_ATAC_mPhi_12h_Rep1"
+mPhi_12_2="154_N3_ATAC_mPhi_12h_Rep2"
+mPhi_12_3="154_N4_ATAC_mPhi_12h_Rep3"
+
+mPhi_36_1="154_N5_ATAC_mPhi_36h_Rep1"
+mPhi_36_2="154_N6_ATAC_mPhi_36h_Rep2"
+mPhi_36_3="154_N7_ATAC_mPhi_36h_Rep3"
+
+GPBSA_12_1="154_N8_ATAC_GPBSA_12h_Rep1"
+GPBSA_12_2="154_N9_ATAC_GPBSA_12h_Rep2"
+GPBSA_12_3="154_N10_ATAC_GPBSA_12h_Rep3"
+
+## Use bedtools to make a consensus peakset of peaks with 50% overlap in all samples
+ml BEDTools/2.31.1-GCC-13.3.0
+
+bedtools intersect -a $PeakDir/${GP_12_1}_bampe_peaks.broadPeak -b ${PeakDir}/${GP_12_2}_bampe_peaks.broadPeak ${PeakDir}/${GP_12_3}_bampe_peaks.broadPeak  -f 0.5 -wa > ${PeakDir}/GP_12h_ConsensusPeaks.broadPeak
+bedtools intersect -a $PeakDir/${mPhi_12_1}_bampe_peaks.broadPeak -b ${PeakDir}/${mPhi_12_2}_bampe_peaks.broadPeak ${PeakDir}/${mPhi_12_3}_bampe_peaks.broadPeak  -f 0.5 -wa > ${PeakDir}/mPhi_12h_ConsensusPeaks.broadPeak
+bedtools intersect -a $PeakDir/${GPBSA_12_1}_bampe_peaks.broadPeak -b ${PeakDir}/${GPBSA_12_2}_bampe_peaks.broadPeak ${PeakDir}/${GPBSA_12_3}_bampe_peaks.broadPeak  -f 0.5 -wa > ${PeakDir}/GPBSA_12h_ConsensusPeaks.broadPeak
+
+bedtools intersect -a $PeakDir/${GP_36_1}_bampe_peaks.broadPeak -b ${PeakDir}/${GP_36_2}_bampe_peaks.broadPeak ${PeakDir}/${GP_36_3}_bampe_peaks.broadPeak  -f 0.5 -wa > ${PeakDir}/GP_36h_ConsensusPeaks.broadPeak
+bedtools intersect -a $PeakDir/${mPhi_36_1}_bampe_peaks.broadPeak -b ${PeakDir}/${mPhi_36_2}_bampe_peaks.broadPeak ${PeakDir}/${mPhi_36_3}_bampe_peaks.broadPeak  -f 0.5 -wa > ${PeakDir}/mPhi_36h_ConsensusPeaks.broadPeak
+bedtools intersect -a $PeakDir/${GPBSA_36_1}_bampe_peaks.broadPeak -b  ${PeakDir}/${GPBSA_36_3}_bampe_peaks.broadPeak  -f 0.5 -wa > ${PeakDir}/GPBSA_36h_ConsensusPeaks.broadPeak
+
+## Remove any peaks that overlap 90% with blacklist
+
+bedtools intersect -a ${PeakDir}/GP_12h_ConsensusPeaks.broadPeak -b /home/ad45368/MouseGenome/mm10-blacklist.v2.Liftover.mm39.bed.txt -f 0.9 -wa > ${PeakDir}/GP_12h_ConsensusPeaks_nonBlacklist.broadPeak
+bedtools intersect -a ${PeakDir}/GPBSA_12h_ConsensusPeaks.broadPeak -b /home/ad45368/MouseGenome/mm10-blacklist.v2.Liftover.mm39.bed.txt -f 0.9 -wa > ${PeakDir}/GPBSA_12h_ConsensusPeaks_nonBlacklist.broadPeak
+bedtools intersect -a ${PeakDir}/mPhi_12h_ConsensusPeaks.broadPeak -b /home/ad45368/MouseGenome/mm10-blacklist.v2.Liftover.mm39.bed.txt -f 0.9 -wa > ${PeakDir}/mPhi_12h_ConsensusPeaks_nonBlacklist.broadPeak
+
+bedtools intersect -a ${PeakDir}/GP_36h_ConsensusPeaks.broadPeak -b /home/ad45368/MouseGenome/mm10-blacklist.v2.Liftover.mm39.bed.txt -f 0.9 -wa > ${PeakDir}/GP_36h_ConsensusPeaks_nonBlacklist.broadPeak
+bedtools intersect -a ${PeakDir}/GPBSA_36h_ConsensusPeaks.broadPeak -b /home/ad45368/MouseGenome/mm10-blacklist.v2.Liftover.mm39.bed.txt -f 0.9 -wa > ${PeakDir}/GPBSA_36h_ConsensusPeaks_nonBlacklist.broadPeak
+bedtools intersect -a ${PeakDir}/mPhi_36h_ConsensusPeaks.broadPeak -b /home/ad45368/MouseGenome/mm10-blacklist.v2.Liftover.mm39.bed.txt -f 0.9 -wa > ${PeakDir}/mPhi_36h_ConsensusPeaks_nonBlacklist.broadPeak
+
+
+
+
+## report no. peaks in each peakfile
+wc -l * > peak_counts.txt
+
+## for each peakfile, calculate peak coverage
+GENOME_SIZE=2654621783
+
+for f in *; do
+    awk -v file="$f" -v gsize="$GENOME_SIZE" '
+        $3 > $2 { sum += ($3 - $2) }
+        END {
+            pct = (sum / gsize) * 100
+            printf "%s\t%d\t%.4f%%\n", file, sum, pct
+        }
+    ' "$f"
+done
+
+### Based on QC metrics and the above analysis, removing 154_N12_ATAC_GPBSA_36h_Rep2_bampe_peaks.broadPeak consensus peak calling + csaw analysis
+
+## Use homer to make a consensus peakset
+ ml Homer/5.1-foss-2023a-R-4.3.2
+
+mergePeaks -d 100 ${PeakDir}/${Control1}_peaks.narrowPeak ${PeakDir}/${Control2}_peaks.narrowPeak ${PeakDir}/${Control3}_peaks.narrowPeak -venn ${PeakDir}/control_peaks.txt  > ${PeakDir}/WT_GFPtrap_Peaks.bed
+mergePeaks -d 100 ${PeakDir}/${Chip1}_peaks.narrowPeak ${PeakDir}/${Chip2}_peaks.narrowPeak -venn ${PeakDir}/fsd1_peaks.txt -prefix fsd1 > ${PeakDir}/fsd1_GFPtrap_Peaks.bed
+
+findMotifsGenome.pl ${PeakDir}/fsd1_GFPtrap_Peaks.bed /home/ad45368/NcGenome/GCA_000182925.2_NC12_genomic.fna ${Motifs}/ -size given -bg ${PeakDir}/WT_GFPtrap_Peaks.bed
+
+ml ucsc/443
+
+bigWigMerge  ${bwdir}/${Control1}.bin_25.smooth_75Bulk.bw ${bwdir}/${Control2}.bin_25.smooth_75Bulk.bw ${bwdir}/${Control3}.bin_25.smooth_75Bulk.bw ${bwdir}/GFPtrap_Control_merge.bedGraph
+bedGraphToBigWig ${bwdir}/GFPtrap_Control_merge.bedGraph /home/ad45368/chrom_sizes.txt  ${bwdir}/GFPtrap_Control_merge.bw
+
+bigWigMerge  ${bwdir}/${Chip1}.bin_25.smooth_75Bulk.bw ${bwdir}/${Chip2}.bin_25.smooth_75Bulk.bw ${bwdir}/fsd1_dpf6_merged.bedGraph
+bedGraphToBigWig ${bwdir}/fsd1_dpf6_merged.bedGraph /home/ad45368/chrom_sizes.txt  ${bwdir}/fsd1_dpf6_merged.bw
